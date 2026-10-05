@@ -132,7 +132,20 @@ def build_contact_record(
 def append_history_to_lead(
     lead: dict,
     message: WhatsAppMessageRequest
-) -> None:
+) -> str:
+    """
+    Append a new WhatsApp conversation entry without
+    overwriting the existing Lead conversation history.
+
+    Returns:
+        Complete updated conversation history.
+
+    The returned history is important when a qualified
+    Lead is converted into a Contact. Zoho does not
+    automatically transfer our custom WhatsApp conversation
+    history field during Lead conversion, so routing_service
+    explicitly copies this complete history to the Contact.
+    """
 
     lead_id = lead["id"]
 
@@ -156,6 +169,8 @@ def append_history_to_lead(
             "WhatsApp_Group_Name": message.groupContext.currentName,
         }
     )
+
+    return updated_history
 
 
 # =========================================================
@@ -261,13 +276,25 @@ def route_whatsapp_sender(
 
         if is_qualified:
 
-            # First append the qualifying message to the
-            # Lead history so the complete history is
-            # preserved during Lead -> Contact conversion.
-            append_history_to_lead(
+            # -------------------------------------------------
+            # STEP 1:
+            # Append the qualifying message to the Lead.
+            #
+            # IMPORTANT:
+            # Keep the returned complete history because Zoho
+            # does not automatically copy this custom field
+            # during Lead -> Contact conversion.
+            # -------------------------------------------------
+
+            updated_history = append_history_to_lead(
                 lead,
                 message
             )
+
+            # -------------------------------------------------
+            # STEP 2:
+            # Perform the real Zoho Lead -> Contact conversion.
+            # -------------------------------------------------
 
             conversion_result = (
                 convert_lead_to_contact(
@@ -278,6 +305,46 @@ def route_whatsapp_sender(
             contact_id = (
                 conversion_result["contact_id"]
             )
+
+            # -------------------------------------------------
+            # STEP 3:
+            # Explicitly initialize the converted Contact.
+            #
+            # This preserves:
+            #   - WhatsApp ID
+            #   - Current WhatsApp Group ID
+            #   - Current WhatsApp Group Name
+            #   - COMPLETE conversation history accumulated
+            #     while the person was still a Lead
+            #
+            # Example:
+            #
+            # Greeting 1
+            # Greeting 2
+            # Transaction enquiry
+            #
+            # all become Contact conversation history.
+            # -------------------------------------------------
+
+            update_contact(
+                contact_id,
+                {
+                    "WhatsApp_ID": whatsapp_id,
+                    "WhatsApp_Group_ID": message.chatId,
+                    "WhatsApp_Group_Name": (
+                        message.groupContext.currentName
+                    ),
+                    "WhatsApp_Conversation_History": (
+                        updated_history
+                    ),
+                }
+            )
+
+            # -------------------------------------------------
+            # STEP 4:
+            # Link the stored WhatsApp message to the newly
+            # converted Contact.
+            # -------------------------------------------------
 
             update_whatsapp_message(
                 whatsapp_message_record_id,
@@ -324,7 +391,10 @@ def route_whatsapp_sender(
     # 3. No Contact and No Lead
     # -----------------------------------------------------
 
+    # -----------------------------------------------------
     # Qualified sender -> create Contact directly
+    # -----------------------------------------------------
+
     if is_qualified:
 
         contact_record = build_contact_record(
@@ -336,12 +406,14 @@ def route_whatsapp_sender(
         )
 
         # Zoho create response:
+        #
         # {
         #     "status": "success",
         #     "details": {
         #         "id": "..."
         #     }
         # }
+
         contact_id = contact_result["details"]["id"]
 
         update_whatsapp_message(
@@ -373,12 +445,14 @@ def route_whatsapp_sender(
     )
 
     # Zoho create response:
+    #
     # {
     #     "status": "success",
     #     "details": {
     #         "id": "..."
     #     }
     # }
+
     lead_id = lead_result["details"]["id"]
 
     update_whatsapp_message(
