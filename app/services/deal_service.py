@@ -2,6 +2,7 @@ import re
 from typing import Optional
 
 from app.schemas.message_schema import WhatsAppMessageRequest
+
 from app.repositories.zoho_repository import (
     find_active_deals_by_contact,
     create_deal,
@@ -21,6 +22,7 @@ def format_conversation_entry(
     Format one WhatsApp message for Deal conversation history.
 
     Format:
+
         Sender Name | displayDate displayTime
         Message text
     """
@@ -41,6 +43,7 @@ def format_conversation_entry(
     display_time = message.displayTime or ""
 
     # Timestamp = displayDate + displayTime
+
     timestamp = " ".join(
         value
         for value in [
@@ -84,11 +87,22 @@ def analyze_commercial_message(
     and extract basic transaction information.
 
     Current deterministic logic extracts:
+
         - commercial intent
         - qualification
         - commodity
         - quantity
         - price
+
+    Commercial intent can be established by:
+
+        1. Explicit commercial / transaction keywords
+
+        OR
+
+        2. Structured transaction information:
+           commodity + quantity
+           commodity + price
 
     Later this can be enhanced with an LLM/context layer.
     """
@@ -101,11 +115,15 @@ def analyze_commercial_message(
 
     normalized_text = message_text.strip()
 
+    lower_text = normalized_text.lower()
+
     # --------------------------------------------------------
-    # Commercial Intent
+    # 1. Commercial / Transaction Keywords
     # --------------------------------------------------------
 
     commercial_keywords = [
+
+        # Buy / Sell intent
         "buy",
         "buyer",
         "sell",
@@ -114,19 +132,35 @@ def analyze_commercial_message(
         "require",
         "required",
         "looking for",
+
+        # Pricing / quotation
         "offer",
         "quote",
         "price",
         "available",
+
+        # Transaction context
+        "deal",
+        "transaction",
+        "contract",
+        "order",
+        "purchase",
+
+        # Deal execution / documents
+        "specification",
+        "spec",
+        "shipment",
+        "delivery",
+        "invoice",
     ]
 
-    is_commercial = any(
-        keyword in normalized_text.lower()
+    has_commercial_keyword = any(
+        keyword in lower_text
         for keyword in commercial_keywords
     )
 
     # --------------------------------------------------------
-    # Quantity Extraction
+    # 2. Quantity Extraction
     # --------------------------------------------------------
 
     quantity = None
@@ -154,7 +188,7 @@ def analyze_commercial_message(
             break
 
     # --------------------------------------------------------
-    # Price Extraction
+    # 3. Price Extraction
     # --------------------------------------------------------
 
     price = None
@@ -181,7 +215,7 @@ def analyze_commercial_message(
             break
 
     # --------------------------------------------------------
-    # Commodity Extraction
+    # 4. Commodity Extraction
     # --------------------------------------------------------
 
     known_commodities = [
@@ -197,23 +231,67 @@ def analyze_commercial_message(
 
     for item in known_commodities:
 
-        if item.lower() in normalized_text.lower():
+        if item.lower() in lower_text:
 
             commodity = item
 
             break
 
     # --------------------------------------------------------
-    # Qualification
+    # 5. Structured Transaction Evidence
+    # --------------------------------------------------------
     #
-    # Current rule:
-    # Commercial intent + identifiable commodity
+    # Examples:
+    #
+    #     500 MT Urea
+    #
+    #     Urea at $385
+    #
+    #     500 MT Urea at $385
+    #
+    # These messages contain enough structured transaction
+    # information to indicate commercial context even if
+    # "buy" or "sell" is not explicitly present.
+    # --------------------------------------------------------
+
+    has_transaction_data = (
+        commodity is not None
+        and (
+            quantity is not None
+            or price is not None
+        )
+    )
+
+    # --------------------------------------------------------
+    # 6. Final Commercial Intent
+    # --------------------------------------------------------
+
+    is_commercial = (
+        has_commercial_keyword
+        or has_transaction_data
+    )
+
+    # --------------------------------------------------------
+    # 7. Qualification
+    # --------------------------------------------------------
+    #
+    # Current business rule:
+    #
+    # Commercial intent
+    #     +
+    # identifiable commodity
+    #
+    # -> sufficiently qualified for Deal routing
     # --------------------------------------------------------
 
     is_qualified = (
         is_commercial
         and commodity is not None
     )
+
+    # --------------------------------------------------------
+    # 8. Return Analysis
+    # --------------------------------------------------------
 
     return {
         "is_commercial": is_commercial,
@@ -253,9 +331,11 @@ def find_matching_deal(
     active Deal.
 
     Current rule:
+
         Match by Commodity.
 
     Later this can use:
+
         commodity
         quantity
         price
@@ -277,6 +357,7 @@ def find_matching_deal(
             and deal_commodity.lower()
             == commodity.lower()
         ):
+
             return deal
 
     return None
@@ -295,9 +376,17 @@ def build_deal_record(
     Build a new Zoho Deal record.
     """
 
-    commodity = analysis.get("commodity")
-    quantity = analysis.get("quantity")
-    price = analysis.get("price")
+    commodity = analysis.get(
+        "commodity"
+    )
+
+    quantity = analysis.get(
+        "quantity"
+    )
+
+    price = analysis.get(
+        "price"
+    )
 
     group_name = (
         message.groupContext.currentName
@@ -306,10 +395,13 @@ def build_deal_record(
     )
 
     conversation_entry = (
-        format_conversation_entry(message)
+        format_conversation_entry(
+            message
+        )
     )
 
     # Deal Name must exist in Zoho.
+
     deal_name_parts = [
         commodity or "WhatsApp Deal",
         message.senderIdentity.pushName
@@ -321,6 +413,7 @@ def build_deal_record(
     )
 
     record = {
+
         "Deal_Name": deal_name,
 
         "Contact_Name": {
@@ -333,10 +426,16 @@ def build_deal_record(
 
         "Stage": "Qualification",
 
-        "WhatsApp_Group_ID": message.chatId,
-        "WhatsApp_Group_Name": group_name,
+        "WhatsApp_Group_ID": (
+            message.chatId
+        ),
+
+        "WhatsApp_Group_Name": (
+            group_name
+        ),
 
         # Initialize Deal conversation history.
+
         "WhatsApp_Conversation_History": (
             conversation_entry
         ),
@@ -367,7 +466,9 @@ def append_history_to_deal(
     deal_id = deal["id"]
 
     existing_history = (
-        deal.get("WhatsApp_Conversation_History")
+        deal.get(
+            "WhatsApp_Conversation_History"
+        )
         or ""
     )
 
@@ -375,9 +476,11 @@ def append_history_to_deal(
         message
     )
 
-    updated_history = append_conversation_history(
-        existing_history,
-        new_entry
+    updated_history = (
+        append_conversation_history(
+            existing_history,
+            new_entry
+        )
     )
 
     update_deal(
@@ -386,7 +489,9 @@ def append_history_to_deal(
             "WhatsApp_Conversation_History": (
                 updated_history
             ),
-            "WhatsApp_Group_ID": message.chatId,
+            "WhatsApp_Group_ID": (
+                message.chatId
+            ),
             "WhatsApp_Group_Name": (
                 message.groupContext.currentName
                 if message.groupContext
@@ -427,7 +532,9 @@ def process_deal(
 
         return {
             "deal_action": "NO_DEAL",
-            "reason": "Sender is not a Contact.",
+            "reason": (
+                "Sender is not a Contact."
+            ),
             "deal_id": None,
         }
 
@@ -437,19 +544,25 @@ def process_deal(
 
     if analysis is None:
 
-        analysis = analyze_commercial_message(
-            message
+        analysis = (
+            analyze_commercial_message(
+                message
+            )
         )
 
     # --------------------------------------------------------
     # 3. No commercial intent
     # --------------------------------------------------------
 
-    if not analysis.get("is_commercial"):
+    if not analysis.get(
+        "is_commercial"
+    ):
 
         return {
             "deal_action": "NO_DEAL",
-            "reason": "No commercial intent detected.",
+            "reason": (
+                "No commercial intent detected."
+            ),
             "deal_id": None,
             "analysis": analysis,
         }
@@ -458,34 +571,42 @@ def process_deal(
     # 4. Commercial but not qualified
     # --------------------------------------------------------
 
-    if not analysis.get("is_qualified"):
+    if not analysis.get(
+        "is_qualified"
+    ):
 
         return {
             "deal_action": "NO_DEAL",
             "reason": (
                 "Commercial intent detected, "
-                "but message is not sufficiently qualified "
-                "for Deal routing."
+                "but message is not sufficiently "
+                "qualified for Deal routing."
             ),
             "deal_id": None,
             "analysis": analysis,
         }
 
     # --------------------------------------------------------
-    # 5. Get active Deals for Contact
+    # 5. Get Active Deals for Contact
     # --------------------------------------------------------
 
-    active_deals = find_active_deals_by_contact(
-        contact_id
+    active_deals = (
+        find_active_deals_by_contact(
+            contact_id
+        )
     )
 
     # --------------------------------------------------------
-    # 6. Try to match existing Deal
+    # 6. Try to Match Existing Deal
     # --------------------------------------------------------
 
-    matching_deal = find_matching_deal(
-        active_deals,
-        analysis.get("commodity"),
+    matching_deal = (
+        find_matching_deal(
+            active_deals,
+            analysis.get(
+                "commodity"
+            ),
+        )
     )
 
     if matching_deal:
@@ -494,12 +615,14 @@ def process_deal(
 
         # Append message to transaction-specific
         # Deal conversation history.
+
         append_history_to_deal(
             matching_deal,
             message
         )
 
-        # Link WhatsApp Message -> existing Deal
+        # Link WhatsApp Message -> existing Deal.
+
         update_whatsapp_message(
             whatsapp_message_record_id,
             {
@@ -510,7 +633,9 @@ def process_deal(
         )
 
         return {
-            "deal_action": "LINK_EXISTING",
+            "deal_action": (
+                "LINK_EXISTING"
+            ),
             "deal_id": deal_id,
             "analysis": analysis,
         }
@@ -538,12 +663,13 @@ def process_deal(
     if not deal_id:
 
         raise RuntimeError(
-            "Zoho created the Deal but did not return "
-            f"a Deal ID: {created_deal}"
+            "Zoho created the Deal but "
+            "did not return a Deal ID: "
+            f"{created_deal}"
         )
 
     # --------------------------------------------------------
-    # 8. Link WhatsApp Message -> new Deal
+    # 8. Link WhatsApp Message -> New Deal
     # --------------------------------------------------------
 
     update_whatsapp_message(
