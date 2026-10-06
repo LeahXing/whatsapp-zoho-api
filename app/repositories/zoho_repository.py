@@ -477,6 +477,218 @@ def update_zoho_record(
 
     return record_result
 
+# ============================================================
+# Upload Attachment to Zoho CRM Record
+# ============================================================
+
+def upload_attachment(
+    module_name: str,
+    record_id: str,
+    file_path: str
+):
+    """
+    Upload a local file as an attachment to a Zoho CRM record.
+
+    Supported modules include:
+        Leads
+        Contacts
+        Deals
+
+    Examples:
+
+        upload_attachment(
+            LEADS_MODULE,
+            lead_id,
+            file_path
+        )
+
+        upload_attachment(
+            CONTACTS_MODULE,
+            contact_id,
+            file_path
+        )
+
+        upload_attachment(
+            DEALS_MODULE,
+            deal_id,
+            file_path
+        )
+    """
+
+    # --------------------------------------------------------
+    # Validate arguments
+    # --------------------------------------------------------
+
+    if not module_name:
+        raise ValueError(
+            "module_name is required."
+        )
+
+    if not record_id:
+        raise ValueError(
+            "record_id is required."
+        )
+
+    if not file_path:
+        raise ValueError(
+            "file_path is required."
+        )
+
+    # --------------------------------------------------------
+    # Verify local file exists
+    # --------------------------------------------------------
+
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(
+            f"Media file not found: {file_path}"
+        )
+
+    # --------------------------------------------------------
+    # Build Zoho Attachments API URL
+    # --------------------------------------------------------
+
+    url = (
+        f"{ZOHO_API_DOMAIN}/crm/v8/"
+        f"{module_name}/{record_id}/Attachments"
+    )
+
+    # --------------------------------------------------------
+    # Prepare headers
+    # --------------------------------------------------------
+
+    headers = get_headers().copy()
+
+    # File uploads use multipart/form-data.
+    #
+    # Do NOT manually set Content-Type.
+    # requests will automatically generate:
+    #
+    # multipart/form-data; boundary=...
+    #
+    # when the files= parameter is used.
+
+    headers.pop(
+        "Content-Type",
+        None
+    )
+
+    # --------------------------------------------------------
+    # Get file name
+    # --------------------------------------------------------
+
+    file_name = os.path.basename(
+        file_path
+    )
+
+    # --------------------------------------------------------
+    # Upload file
+    # --------------------------------------------------------
+
+    try:
+
+        with open(
+            file_path,
+            "rb"
+        ) as file_object:
+
+            files = {
+                "file": (
+                    file_name,
+                    file_object
+                )
+            }
+
+            response = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                timeout=60
+            )
+
+    except OSError as exc:
+
+        raise RuntimeError(
+            f"Unable to read media file: "
+            f"{file_path}"
+        ) from exc
+
+    # --------------------------------------------------------
+    # Handle Zoho API error
+    # --------------------------------------------------------
+
+    if not response.ok:
+
+        try:
+            error_detail = (
+                response.json()
+            )
+
+        except ValueError:
+            error_detail = (
+                response.text
+            )
+
+        raise RuntimeError(
+            f"Zoho attachment upload failed "
+            f"for module {module_name}, "
+            f"record {record_id}. "
+            f"HTTP {response.status_code}: "
+            f"{error_detail}"
+        )
+
+    # --------------------------------------------------------
+    # Parse Zoho response
+    # --------------------------------------------------------
+
+    try:
+        result = response.json()
+
+    except ValueError as exc:
+
+        raise RuntimeError(
+            "Zoho attachment upload returned "
+            "an invalid JSON response."
+        ) from exc
+
+    records = result.get(
+        "data",
+        []
+    )
+
+    if not records:
+
+        raise RuntimeError(
+            f"Zoho returned no attachment data "
+            f"for module {module_name}, "
+            f"record {record_id}: "
+            f"{result}"
+        )
+
+    attachment_result = (
+        records[0]
+    )
+
+    # --------------------------------------------------------
+    # Verify Zoho success
+    # --------------------------------------------------------
+
+    if (
+        attachment_result.get("status")
+        != "success"
+    ):
+
+        raise RuntimeError(
+            f"Zoho failed to upload "
+            f"attachment to "
+            f"{module_name}: "
+            f"{attachment_result}"
+        )
+
+    # --------------------------------------------------------
+    # Return Zoho attachment result
+    # --------------------------------------------------------
+
+    return attachment_result
 
 # ============================================================
 # Contact Operations

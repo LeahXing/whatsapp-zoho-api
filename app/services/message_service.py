@@ -18,6 +18,10 @@ from app.services.deal_service import (
     process_deal,
 )
 
+from app.services.media_service import (
+    upload_media_to_zoho,
+)
+
 
 # ============================================================
 # Build Zoho WhatsApp_Messages Record
@@ -32,20 +36,24 @@ def build_zoho_message_record(
     """
 
     record = {
+
         # ----------------------------------------------------
         # Zoho mandatory record name
         # ----------------------------------------------------
+
         "Name": message.messageId,
 
         # ----------------------------------------------------
         # Message Identification
         # ----------------------------------------------------
+
         "Message_ID": message.messageId,
         "Group_ID": message.chatId,
 
         # ----------------------------------------------------
         # Group Information
         # ----------------------------------------------------
+
         "Group_Name": (
             message.groupContext.currentName
             if message.groupContext
@@ -55,6 +63,7 @@ def build_zoho_message_record(
         # ----------------------------------------------------
         # Sender Information
         # ----------------------------------------------------
+
         "WhatsApp_ID": (
             message.senderIdentity.whatsappId
         ),
@@ -70,6 +79,7 @@ def build_zoho_message_record(
         # ----------------------------------------------------
         # Message Metadata
         # ----------------------------------------------------
+
         "Unix_Timestamp": (
             message.messageMeta.unixTimestamp
             if message.messageMeta
@@ -91,6 +101,7 @@ def build_zoho_message_record(
         # ----------------------------------------------------
         # Message Content
         # ----------------------------------------------------
+
         "Message": (
             message.messageContent.textContent
             if message.messageContent
@@ -112,6 +123,7 @@ def build_zoho_message_record(
         # ----------------------------------------------------
         # Mention Information
         # ----------------------------------------------------
+
         "Has_Explicit_Mentions": (
             message.mentionContext.hasExplicitMentions
             if message.mentionContext
@@ -138,6 +150,7 @@ def build_zoho_message_record(
         # ----------------------------------------------------
         # Moderation Information
         # ----------------------------------------------------
+
         "Is_Pinned_Message": (
             message.moderationContext.isPinnedMessage
             if message.moderationContext
@@ -159,6 +172,7 @@ def build_zoho_message_record(
         # ----------------------------------------------------
         # Display / Media Metadata
         # ----------------------------------------------------
+
         "Display_Date": message.displayDate,
         "Display_Time": message.displayTime,
         "Media_Path": message.mediaPath,
@@ -166,6 +180,7 @@ def build_zoho_message_record(
 
     # Remove None values.
     # Keep False and 0 because they are valid values.
+
     return {
         key: value
         for key, value in record.items()
@@ -190,11 +205,13 @@ def process_whatsapp_message(
         3. Analyze commercial intent and qualification.
         4. Route sender to Contact / Lead.
         5. Process Deal using the same analysis.
-        6. Return complete processing result.
+        6. Process media attachments.
+        7. Return complete processing result.
 
     Important:
+
         The WhatsApp message is always stored before CRM
-        routing or Deal processing.
+        routing, Deal processing, or media processing.
     """
 
     # --------------------------------------------------------
@@ -255,7 +272,7 @@ def process_whatsapp_message(
     # 4. Analyze Message BEFORE Person Routing
     # --------------------------------------------------------
     #
-    # This is important because qualification determines:
+    # Qualification determines:
     #
     # Existing Lead + unqualified
     #     -> remain Lead
@@ -328,7 +345,44 @@ def process_whatsapp_message(
         }
 
     # --------------------------------------------------------
-    # 7. Return Complete Processing Result
+    # 7. Media Processing
+    # --------------------------------------------------------
+    #
+    # Media processing happens AFTER person routing and
+    # Deal processing.
+    #
+    # At this point we know:
+    #
+    #     person_type
+    #     person_id
+    #     deal_id
+    #
+    # Attachment rules:
+    #
+    # Lead:
+    #     -> Lead attachment
+    #
+    # Contact without Deal:
+    #     -> Contact attachment
+    #
+    # Contact with Deal:
+    #     -> Contact attachment
+    #     -> Deal attachment
+    # --------------------------------------------------------
+
+    deal_id = deal_result.get(
+        "deal_id"
+    )
+
+    media_result = upload_media_to_zoho(
+        message=message,
+        person_type=person_type,
+        person_id=person_id,
+        deal_id=deal_id,
+    )
+
+    # --------------------------------------------------------
+    # 8. Return Complete Processing Result
     # --------------------------------------------------------
 
     return {
@@ -368,4 +422,6 @@ def process_whatsapp_message(
         },
 
         "deal": deal_result,
+
+        "media": media_result,
     }
