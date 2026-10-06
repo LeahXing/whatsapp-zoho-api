@@ -117,6 +117,7 @@ def detect_media_type(
     Determine the media category.
 
     Returns:
+
         image
         pdf
         unsupported
@@ -177,6 +178,7 @@ def validate_media(
 # ============================================================
 
 def determine_attachment_targets(
+    whatsapp_message_record_id: Optional[str],
     person_type: Optional[str],
     person_id: Optional[str],
     deal_id: Optional[str] = None,
@@ -187,17 +189,42 @@ def determine_attachment_targets(
 
     Business rules:
 
+    WhatsApp Message:
+        Always attach the media to the corresponding
+        WhatsApp_Messages record when its record ID exists.
+
     Lead:
-        Attach to Lead.
+        Attach to WhatsApp_Messages and Lead.
 
     Contact without Deal:
-        Attach to Contact.
+        Attach to WhatsApp_Messages and Contact.
 
     Contact with Deal:
-        Attach to Contact and Deal.
+        Attach to WhatsApp_Messages, Contact, and Deal.
     """
 
     targets = []
+
+    # --------------------------------------------------------
+    # WhatsApp Message
+    # --------------------------------------------------------
+    #
+    # Every incoming media file belongs to the original
+    # WhatsApp message. Therefore the WhatsApp_Messages
+    # record should always receive the attachment when
+    # its Zoho record ID is available.
+    # --------------------------------------------------------
+
+    if whatsapp_message_record_id:
+
+        targets.append(
+            {
+                "module": "WhatsApp_Messages",
+                "record_id": (
+                    whatsapp_message_record_id
+                ),
+            }
+        )
 
     # --------------------------------------------------------
     # Lead
@@ -253,6 +280,7 @@ def determine_attachment_targets(
 
 def prepare_media_processing(
     message: WhatsAppMessageRequest,
+    whatsapp_message_record_id: Optional[str],
     person_type: Optional[str],
     person_id: Optional[str],
     deal_id: Optional[str] = None,
@@ -339,6 +367,9 @@ def prepare_media_processing(
     # --------------------------------------------------------
 
     targets = determine_attachment_targets(
+        whatsapp_message_record_id=(
+            whatsapp_message_record_id
+        ),
         person_type=person_type,
         person_id=person_id,
         deal_id=deal_id,
@@ -383,6 +414,7 @@ def prepare_media_processing(
 
 def upload_media_to_zoho(
     message: WhatsAppMessageRequest,
+    whatsapp_message_record_id: Optional[str],
     person_type: Optional[str],
     person_id: Optional[str],
     deal_id: Optional[str] = None,
@@ -394,13 +426,19 @@ def upload_media_to_zoho(
     Examples:
 
     Lead:
-        file -> Lead
+
+        file -> WhatsApp_Messages
+             -> Lead
 
     Contact:
-        file -> Contact
+
+        file -> WhatsApp_Messages
+             -> Contact
 
     Contact + Deal:
-        file -> Contact
+
+        file -> WhatsApp_Messages
+             -> Contact
              -> Deal
     """
 
@@ -410,6 +448,9 @@ def upload_media_to_zoho(
 
     media_info = prepare_media_processing(
         message=message,
+        whatsapp_message_record_id=(
+            whatsapp_message_record_id
+        ),
         person_type=person_type,
         person_id=person_id,
         deal_id=deal_id,
@@ -469,7 +510,7 @@ def upload_media_to_zoho(
             )
 
     # --------------------------------------------------------
-    # 4. Determine overall upload status
+    # 4. Determine Overall Upload Status
     # --------------------------------------------------------
 
     successful_uploads = [
@@ -503,7 +544,7 @@ def upload_media_to_zoho(
         media_action = "UPLOAD_FAILED"
 
     # --------------------------------------------------------
-    # 5. Return result
+    # 5. Return Result
     # --------------------------------------------------------
 
     return {
